@@ -34,6 +34,7 @@ main = do
 
 {-
 Has problems with main not being rebuilt when changes are make to libsupply.a.
+
 Need to check to see if the action for libsource.a is built regardles of changes.
 
 To correct the about probs see:
@@ -50,11 +51,11 @@ shakeBuilder :: IO ()
 shakeBuilder = shakeArgs shakeOptions{shakeFiles="_build"} $ do
   let buildDir = "_build"
       srcDir = "src"
-  --want [srcDir </>  "libsupply.a"]
-  --want [buildDir </> "main_exe" <.> exe]
-
+      _srcDir = "_src"
   
-  --This cures the problem of the file not exsiting before the exe is gen'd
+  
+  --This cures the problem of the libsource.a file not exsiting before the exe is gen'd by ensuring it is built before the exe.
+  --Should be able to get rid of this once I create a dependency for it, on the exe.
   Shake.action $  do
        b <- doesFileExist $ srcDir ++ "libsource.a"
        when (not b) $ do
@@ -62,42 +63,62 @@ shakeBuilder = shakeArgs shakeOptions{shakeFiles="_build"} $ do
          cs <- getDirectoryFiles "" [srcDir </> "*.c"]
          need  cs
          
-         let co = [buildDir </> c -<.> "o" | c <- cs]
+         let co = [buildDir </> c -<.> "c.o" | c <- cs]
          need co
          
          cmd_ "ar rcs" [srcDir ++ "/libsupply.a"] co
     
-  --build the .c files required for libsupply.a
-  buildDir </> "//*.o" %> \out -> do
-    putInfo $ "in build_dir </> //*.o: " ++ ( show out)
-    let c = dropDirectory1 $ out -<.> "c"
-    let m = out -<.> "m"
-    cmd_ "gcc -c" [c] "-o" [out] "-MMD -MF" [m]
-    neededMakefileDependencies m
-
+  
   --call this after the precdeding action so that the exsitence of libsupply.a
   want [buildDir </> "main_exe" <.> exe]
 
+  --build the .c files required for libsupply.a
+  buildDir </> "//*.c.o" %> \out -> do
+    putInfo $ "in build_dir </> //*.o: " ++ ( show out)
+    let c_ = dropDirectory1 $ out -<.> ""
+        c = c_ -<.> "c"
+        m = out -<.> "m"
+    cmd_ "gcc -c" [c] "-o" [out] "-MMD -MF" [m]
+    neededMakefileDependencies m
+
+
+  --build the haskell exe.
   buildDir </> "main_exe" <.> exe %> \out -> do
-    putInfo $ "in build4/libsupply.a: " ++ ( show out)
+    putInfo $ "in " ++ buildDir ++ "/" ++ ( show out)
+
+    --has to be here again, even though it is in the libsupply.a action, or changes do not show up.
+    --Maybe the action only runs the very 1st time, or if I delete src/libsupply.a
     cs <- getDirectoryFiles "" [srcDir </> "*.c"]
     need  cs
-    
-    let co = [buildDir </> c -<.> "o" | c <- cs]
+    let co = [buildDir </> c -<.> "c.o" | c <- cs]
     need co
     
-    main <- getDirectoryFiles "" [srcDir </> "main.hs"]
-    need main
+    --need the  _src/*.hs files.
+    hs <- getDirectoryFiles "" [_srcDir </> "*.hs"]
+    need  hs
+    
+    {-
+     Compile the haskell files into an exe.
+     By passing in all the .hs file via `hs`, ghc compiles them all, finding `main` in the process.
 
-    
-    
+     "-Lsrc" sets the search path for the static library libsupply.a
+
+     "-lsupply" set the static library to use.
+
+     "-outputdir" "_build" Not sure if I actually need this.
+
+     "-o" out  Not sure if I need this, but it probaly says to create the output file as _src/main_exe
+
+     
+    -}
     cmd_
           "ghc"
-          (srcDir </> "main.hs")
-          "-isrc"
+          hs
           "-Lsrc"
           "-lsupply"
           "-outputdir"
           "_build"
           "-o"
           out
+          
+  

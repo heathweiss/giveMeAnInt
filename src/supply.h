@@ -1,1 +1,4 @@
 int giveMeAnInt();
+
+double giveMeADouble();
+
