@@ -34,90 +34,74 @@ main = do
 
 {-
 Has problems with main not being rebuilt when changes are make to libsupply.a.
-
-Need to check to see if the action for libsource.a is built regardles of changes.
-
-To correct the about probs see:
-https://github.com/ndmitchell/shake/blob/master/docs/Ninja.md
-which mentions:
-If you build with --lint certain invariants will be checked, and an error will be raised if they are violated. For example,
-if you depend on a generated file via depfile, but do not list it as a dependency (even an order only dependency), an error will be raised.
-
-Note the mention about "depend on a generated file via depfile".
-Perhaps that is what will fix this problem
+Maybe it should be that way, as looking for changes in a library is not reasonable.
 
 -}
 shakeBuilder :: IO ()
 shakeBuilder = shakeArgs shakeOptions{shakeFiles="_build"} $ do
   let buildDir = "_build"
-      srcDir = "src"
-      _srcDir = "_src"
+      srcDir = "_src"
   
   
   --This cures the problem of the libsource.a file not exsiting before the exe is gen'd by ensuring it is built before the exe.
-  --Should be able to get rid of this once I create a dependency for it, on the exe.
+  --In order to rebuild the library after changes, delete the _build/libsupply.a file and run the build.
+  --Then make changes to main or any other .hs files that main uses, and do another rebuild.
   Shake.action $  do
-       b <- doesFileExist $ srcDir ++ "libsource.a"
+       b <- doesFileExist $ buildDir ++ "libsource.a"
        when (not b) $ do
          --putInfo $ "in build4/libsupply.a: " ++ ( show out)
          cs <- getDirectoryFiles "" [srcDir </> "*.c"]
          need  cs
          
-         let co = [buildDir </> c -<.> "c.o" | c <- cs]
+         let co = [buildDir </> "libo" </>  c -<.> "o" | c <- cs]
          need co
          
-         cmd_ "ar rcs" [srcDir ++ "/libsupply.a"] co
+         cmd_ "ar rcs" [buildDir ++ "/libsupply.a"] co
     
   
   --call this after the precdeding action so that the exsitence of libsupply.a
   want [buildDir </> "main_exe" <.> exe]
 
+  phony "clean" $ do
+        putInfo "Cleaning files in _build"
+        removeFilesAfter buildDir ["//*"]  
+
   --build the .c files required for libsupply.a
-  buildDir </> "//*.c.o" %> \out -> do
+  buildDir </> "libo" </> "//*.o" %> \out -> do
     putInfo $ "in build_dir </> //*.o: " ++ ( show out)
-    let c_ = dropDirectory1 $ out -<.> ""
-        c = c_ -<.> "c"
-        m = out -<.> "m"
-    cmd_ "gcc -c" [c] "-o" [out] "-MMD -MF" [m]
-    neededMakefileDependencies m
+    let c = dropDirectory1 $ dropDirectory1 $  out -<.> "c"
+        --c =  dropDirectory1 c_
+        
+    cmd_ "gcc -c" [c] "-o" [out] 
+    
 
 
-  --build the haskell exe.
+  {-
+    build the haskell exe.
+    No need to load and need the library files, as they get built separately.
+    To refresh after rebuilding the library, make a change to main.
+  -}
   buildDir </> "main_exe" <.> exe %> \out -> do
     putInfo $ "in " ++ buildDir ++ "/" ++ ( show out)
 
-    --has to be here again, even though it is in the libsupply.a action, or changes do not show up.
-    --Maybe the action only runs the very 1st time, or if I delete src/libsupply.a
-    cs <- getDirectoryFiles "" [srcDir </> "*.c"]
-    need  cs
-    let co = [buildDir </> c -<.> "c.o" | c <- cs]
-    need co
-    
     --need the  _src/*.hs files.
-    hs <- getDirectoryFiles "" [_srcDir </> "*.hs"]
+    hs <- getDirectoryFiles "" [srcDir </> "*.hs"]
     need  hs
     
     {-
      Compile the haskell files into an exe.
-     By passing in all the .hs file via `hs`, ghc compiles them all, finding `main` in the process.
+     By passing in all the .hs file via `hs`, ghc compiles them all, finding `main` in the process, and allowing linking between them.
 
-     "-Lsrc" sets the search path for the static library libsupply.a
+     "-Lsrc" sets the search path for the library libsupply.a
 
-     "-lsupply" set the static library to use.
+     "-lsupply" set the library to use.
 
-     "-outputdir" "_build" Not sure if I actually need this.
-
-     "-o" out  Not sure if I need this, but it probaly says to create the output file as _src/main_exe
-
-     
-    -}
+     "-o" out  Not sure if I need this, but it probaly says to create the output file as _src/main_exe -}
     cmd_
           "ghc"
           hs
-          "-Lsrc"
+          "-L_build"
           "-lsupply"
-          "-outputdir"
-          "_build"
           "-o"
           out
           
